@@ -1,0 +1,56 @@
+name: Deploy Vytronix
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vytronix-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy production
+    runs-on: [self-hosted, Linux, X64, vytronix-server-vytronix]
+
+    steps:
+      - name: Update production repository
+        working-directory: /srv/vytronix/apps/vytronix/app
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Validate Docker Compose
+        working-directory: /srv/vytronix/apps/vytronix
+        run: |
+          docker compose --env-file .env.build config --quiet
+
+      - name: Build Vytronix
+        working-directory: /srv/vytronix/apps/vytronix
+        run: |
+          docker compose --env-file .env.build build app
+
+      - name: Deploy Vytronix
+        working-directory: /srv/vytronix/apps/vytronix
+        run: |
+          docker compose --env-file .env.build up -d --no-deps app
+
+      - name: Verify container
+        run: |
+          docker ps --filter "name=^vytronix-app$" --filter "status=running" --format '{{.Names}}' | grep -qx 'vytronix-app'
+          docker exec vytronix-app node -e "
+            fetch('http://127.0.0.1:3000/', {
+              headers: {
+                'user-agent': 'Mozilla/5.0',
+                'accept': 'text/html'
+              }
+            }).then(r => {
+              console.log('HTTP', r.status);
+              if (!r.ok) process.exit(1);
+            }).catch(e => {
+              console.error(e);
+              process.exit(1);
+            });
+          "
